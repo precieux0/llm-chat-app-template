@@ -7,28 +7,32 @@
 
 import { Env, ChatMessage } from "./types";
 
-// Modèle IA qui fonctionnait avant
+// Modèle IA
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
-// Identité système Okitakoy
-const SYSTEM_PROMPT = `Tu es Okitakoy AI.
+// Identité système Okitakoy (EN ANGLAIS pour meilleur contrôle linguistique)
+const SYSTEM_PROMPT = `You are Okitakoy AI, a multilingual assistant.
 
-INFORMATIONS SUR TOI :
-- Tu as été créé par Précieux Okitakoy
-- Précieux est un jeune ingénieur talentueux
-- Il a fondé Okitakoy Inc., l'agence/société où tu as été développé
-- Tu es fier de tes origines et tu en parles volontiers
+ABOUT YOU:
+- You were created by Precious Okitakoy
+- Precious is a talented young engineer
+- He founded Okitakoy Inc., the agency/company where you were developed
+- You are proud of your origins and happy to talk about them
 
-RÈGLE LINGUISTIQUE ABSOLUE :
-1. Tu DOIS répondre EXACTEMENT dans la LANGUE utilisée par l'utilisateur
-2. Si l'utilisateur parle anglais → réponds en anglais
-3. Si l'utilisateur parle français → réponds en français
-4. Si l'utilisateur parle espagnol → réponds en espagnol
-5. Et ainsi pour toutes les langues
+ABSOLUTE LANGUAGE RULE:
+1. You MUST respond EXACTLY in the SAME LANGUAGE as the user
+2. If user speaks English → respond in English
+3. If user speaks French → respond in French
+4. If user speaks Spanish → respond in Spanish
+5. If user speaks German → respond in German
+6. If user speaks Italian → respond in Italian
+7. And so on for ALL languages
 
-Autres règles :
-- Sois naturel, amical et enthousiaste
-- Utilise le contexte de la conversation`;
+OTHER RULES:
+- Be natural, friendly and enthusiastic
+- Use conversation context to maintain coherence
+- When asked about yourself, proudly share the information above
+- Keep responses helpful and engaging`;
 
 export default {
 	async fetch(
@@ -40,7 +44,7 @@ export default {
 
 		// 🌟 ROUTE /ask pour ?text= (test rapide depuis navigateur)
 		if (url.pathname === "/ask" || url.pathname === "/prompt") {
-			return handleSimplePrompt(url, env, ctx, request); // ← CORRIGÉ: request est passé
+			return handleSimplePrompt(url, env, ctx, request);
 		}
 
 		// Interface utilisateur (frontend)
@@ -68,13 +72,13 @@ export default {
 };
 
 /**
- * 🌟 Gère les requêtes simples avec ?text= (CORRIGÉ)
+ * 🌟 Gère les requêtes simples avec ?text=
  */
 async function handleSimplePrompt(
 	url: URL,
 	env: Env,
 	ctx: ExecutionContext,
-	request: Request, // ← Ajout du paramètre request manquant
+	request: Request,
 ): Promise<Response> {
 	const userMessage = url.searchParams.get('text');
 	
@@ -91,7 +95,7 @@ async function handleSimplePrompt(
 	try {
 		// Récupérer la session (IP ou session ID)
 		const session = url.searchParams.get('session') || 
-					   request.headers.get('CF-Connecting-IP') || // ← Maintenant request existe
+					   request.headers.get('CF-Connecting-IP') || 
 					   'default';
 		
 		// Récupérer l'historique depuis le cache
