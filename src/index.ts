@@ -33,6 +33,11 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 
+		// 🌟 NOUVELLE ROUTE : /ask pour ?text= (test rapide depuis navigateur)
+		if (url.pathname === "/ask" || url.pathname === "/prompt") {
+			return handleSimplePrompt(url, env, ctx);
+		}
+
 		// Interface utilisateur (frontend)
 		if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
 			return env.ASSETS.fetch(request);
@@ -58,7 +63,99 @@ export default {
 };
 
 /**
- * Gère les requêtes de chat avec mémoire
+ * 🌟 NOUVELLE FONCTION : Gère les requêtes simples avec ?text=
+ */
+async function handleSimplePrompt(
+	url: URL,
+	env: Env,
+	ctx: ExecutionContext,
+): Promise<Response> {
+	const userMessage = url.searchParams.get('text');
+	
+	if (!userMessage) {
+		return new Response(JSON.stringify({
+			error: "Paramètre 'text' manquant. Utilise ?text=ta question",
+			exemple: "/ask?text=Bonjour"
+		}), {
+			status: 400,
+			headers: { "content-type": "application/json" }
+		});
+	}
+
+	try {
+		// Récupérer la session (IP ou session ID)
+		const session = url.searchParams.get('session') || 
+					   request.headers?.get('CF-Connecting-IP') || 
+					   'default';
+		
+		// Récupérer l'historique depuis le cache (optionnel)
+		const cache = await caches.open('okitakoy-memory');
+		let history: ChatMessage[] = [];
+		
+		const cachedHistory = await cache.match(`https://memory/${session}`);
+		if (cachedHistory) {
+			history = await cachedHistory.json();
+		}
+
+		// Ajouter le message à l'historique
+		history.push({ role: "user", content: userMessage });
+
+		// Garder les 30 derniers messages
+		if (history.length > 30) {
+			history = history.slice(-30);
+		}
+
+		// Sauvegarder l'historique (sans la réponse)
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
+
+		// Appel à l'IA sans streaming pour réponse simple
+		const chat = {
+			messages: [
+				{ role: "system", content: SYSTEM_PROMPT },
+				...history
+			]
+		};
+
+		const response = await env.AI.run(MODEL_ID, chat);
+		const aiText = response.response || response;
+
+		// Sauvegarder la réponse dans l'historique (optionnel)
+		history.push({ role: "assistant", content: aiText });
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
+
+		return new Response(JSON.stringify({
+			success: true,
+			question: userMessage,
+			response: aiText,
+			session: session
+		}, null, 2), {
+			headers: { 
+				"content-type": "application/json",
+				"access-control-allow-origin": "*"
+			}
+		});
+
+	} catch (error) {
+		console.error("Error:", error);
+		return new Response(
+			JSON.stringify({ error: "Failed to process request" }),
+			{ status: 500, headers: { "content-type": "application/json" } }
+		);
+	}
+}
+
+/**
+ * Gère les requêtes de chat avec mémoire et streaming
  */
 async function handleChatRequest(
 	request: Request,
