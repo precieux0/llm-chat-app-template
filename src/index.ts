@@ -7,8 +7,8 @@
 
 import { Env, ChatMessage } from "./types";
 
-// Modèle IA
-const MODEL_ID = "@cf/meta/llama-3-8b-instruct";
+// Modèle IA qui fonctionnait avant
+const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
 // Identité système Okitakoy
 const SYSTEM_PROMPT = `Tu es Okitakoy AI.
@@ -41,19 +41,21 @@ export default {
 		// API: /api/chat (avec mémoire)
 		if (url.pathname === "/api/chat") {
 			if (request.method === "POST") {
-				return handleChatRequest(request, env);
+				return handleChatRequest(request, env, ctx);
 			}
 			return new Response("Method not allowed", { status: 405 });
 		}
 
 		// API: /api/memory (pour gérer les sessions)
-		if (url.pathname === "/api/memory" && request.method === "DELETE") {
-			return handleMemoryClear(request, env);
+		if (url.pathname === "/api/memory") {
+			if (request.method === "DELETE") {
+				return handleMemoryClear(request, env);
+			}
 		}
 
 		return new Response("Not found", { status: 404 });
 	},
-} satisfies ExportedHandler<Env>;
+};
 
 /**
  * Gère les requêtes de chat avec mémoire
@@ -61,6 +63,7 @@ export default {
 async function handleChatRequest(
 	request: Request,
 	env: Env,
+	ctx: ExecutionContext,
 ): Promise<Response> {
 	try {
 		// Récupérer la session (IP ou session ID)
@@ -78,21 +81,9 @@ async function handleChatRequest(
 		}
 
 		// Parse la requête
-		const { messages = [], clear = false } = (await request.json()) as {
+		const { messages = [] } = (await request.json()) as {
 			messages: ChatMessage[];
-			clear?: boolean;
 		};
-
-		// Si demande d'effacement
-		if (clear) {
-			await cache.delete(`https://memory/${session}`);
-			return new Response(JSON.stringify({ 
-				success: true, 
-				message: "Mémoire effacée" 
-			}), {
-				headers: { "content-type": "application/json" }
-			});
-		}
 
 		// Ajouter le nouveau message à l'historique
 		const userMessage = messages[messages.length - 1];
@@ -104,6 +95,14 @@ async function handleChatRequest(
 		if (history.length > 30) {
 			history = history.slice(-30);
 		}
+
+		// Sauvegarder l'historique (sans la réponse)
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
 
 		// Construire les messages avec système
 		const fullMessages = [
@@ -120,9 +119,6 @@ async function handleChatRequest(
 				stream: true,
 			}
 		);
-
-		// Sauvegarder la réponse plus tard (dans un contexte séparé)
-		ctx.waitUntil(collectAndSaveResponse(stream, history, session, cache));
 
 		return new Response(stream, {
 			headers: {
@@ -146,49 +142,30 @@ async function handleChatRequest(
 }
 
 /**
- * Collecte et sauvegarde la réponse dans l'historique
- */
-async function collectAndSaveResponse(
-	stream: ReadableStream,
-	history: ChatMessage[],
-	session: string,
-	cache: Cache
-): Promise<void> {
-	try {
-		// Cette partie est complexe avec le streaming
-		// Pour simplifier, on pourrait stocker après coup
-		// Mais pour l'instant, on garde juste l'historique utilisateur
-		
-		// Sauvegarder l'historique (sans la réponse streamée)
-		await cache.put(
-			`https://memory/${session}`, 
-			new Response(JSON.stringify(history), {
-				headers: { "cache-control": "max-age=86400" }
-			})
-		);
-	} catch (e) {
-		console.error("Failed to save memory:", e);
-	}
-}
-
-/**
  * Efface la mémoire d'une session
  */
 async function handleMemoryClear(
 	request: Request,
 	env: Env
 ): Promise<Response> {
-	const session = request.headers.get('X-Session-ID') || 
-				   request.headers.get('CF-Connecting-IP') || 
-				   'default';
-	
-	const cache = await caches.open('okitakoy-memory');
-	await cache.delete(`https://memory/${session}`);
-	
-	return new Response(JSON.stringify({ 
-		success: true, 
-		message: "Mémoire effacée" 
-	}), {
-		headers: { "content-type": "application/json" }
-	});
+	try {
+		const session = request.headers.get('X-Session-ID') || 
+					   request.headers.get('CF-Connecting-IP') || 
+					   'default';
+		
+		const cache = await caches.open('okitakoy-memory');
+		await cache.delete(`https://memory/${session}`);
+		
+		return new Response(JSON.stringify({ 
+			success: true, 
+			message: "Mémoire effacée" 
+		}), {
+			headers: { "content-type": "application/json" }
+		});
+	} catch (error) {
+		return new Response(
+			JSON.stringify({ error: "Failed to clear memory" }),
+			{ status: 500, headers: { "content-type": "application/json" } }
+		);
+	}
 }
