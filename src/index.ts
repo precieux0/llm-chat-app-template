@@ -33,9 +33,9 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 
-		// 🌟 NOUVELLE ROUTE : /ask pour ?text= (test rapide depuis navigateur)
+		// 🌟 ROUTE /ask pour ?text= (test rapide depuis navigateur)
 		if (url.pathname === "/ask" || url.pathname === "/prompt") {
-			return handleSimplePrompt(url, env, ctx);
+			return handleSimplePrompt(url, env, ctx, request); // ← CORRIGÉ: request est passé
 		}
 
 		// Interface utilisateur (frontend)
@@ -43,7 +43,7 @@ export default {
 			return env.ASSETS.fetch(request);
 		}
 
-		// API: /api/chat (avec mémoire)
+		// API: /api/chat (avec mémoire et streaming)
 		if (url.pathname === "/api/chat") {
 			if (request.method === "POST") {
 				return handleChatRequest(request, env, ctx);
@@ -51,7 +51,7 @@ export default {
 			return new Response("Method not allowed", { status: 405 });
 		}
 
-		// API: /api/memory (pour gérer les sessions)
+		// API: /api/memory (pour effacer les sessions)
 		if (url.pathname === "/api/memory") {
 			if (request.method === "DELETE") {
 				return handleMemoryClear(request, env);
@@ -63,12 +63,13 @@ export default {
 };
 
 /**
- * 🌟 NOUVELLE FONCTION : Gère les requêtes simples avec ?text=
+ * 🌟 Gère les requêtes simples avec ?text= (CORRIGÉ)
  */
 async function handleSimplePrompt(
 	url: URL,
 	env: Env,
 	ctx: ExecutionContext,
+	request: Request, // ← Ajout du paramètre request manquant
 ): Promise<Response> {
 	const userMessage = url.searchParams.get('text');
 	
@@ -85,10 +86,10 @@ async function handleSimplePrompt(
 	try {
 		// Récupérer la session (IP ou session ID)
 		const session = url.searchParams.get('session') || 
-					   request.headers?.get('CF-Connecting-IP') || 
+					   request.headers.get('CF-Connecting-IP') || // ← Maintenant request existe
 					   'default';
 		
-		// Récupérer l'historique depuis le cache (optionnel)
+		// Récupérer l'historique depuis le cache
 		const cache = await caches.open('okitakoy-memory');
 		let history: ChatMessage[] = [];
 		
@@ -124,7 +125,7 @@ async function handleSimplePrompt(
 		const response = await env.AI.run(MODEL_ID, chat);
 		const aiText = response.response || response;
 
-		// Sauvegarder la réponse dans l'historique (optionnel)
+		// Sauvegarder la réponse dans l'historique
 		history.push({ role: "assistant", content: aiText });
 		ctx.waitUntil(cache.put(
 			`https://memory/${session}`, 
@@ -146,9 +147,9 @@ async function handleSimplePrompt(
 		});
 
 	} catch (error) {
-		console.error("Error:", error);
+		console.error("Error in /ask:", error);
 		return new Response(
-			JSON.stringify({ error: "Failed to process request" }),
+			JSON.stringify({ error: "Échec du traitement de la requête" }),
 			{ status: 500, headers: { "content-type": "application/json" } }
 		);
 	}
@@ -227,7 +228,7 @@ async function handleChatRequest(
 		});
 
 	} catch (error) {
-		console.error("Error:", error);
+		console.error("Error in /api/chat:", error);
 		return new Response(
 			JSON.stringify({ error: "Failed to process request" }),
 			{
@@ -260,6 +261,7 @@ async function handleMemoryClear(
 			headers: { "content-type": "application/json" }
 		});
 	} catch (error) {
+		console.error("Error in /api/memory:", error);
 		return new Response(
 			JSON.stringify({ error: "Failed to clear memory" }),
 			{ status: 500, headers: { "content-type": "application/json" } }
