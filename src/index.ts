@@ -1,26 +1,31 @@
 /**
- * LLM Chat Application Template
- *
- * A simple chat application using Cloudflare Workers AI.
- * This template demonstrates how to implement an LLM-powered chat interface with
- * streaming responses using Server-Sent Events (SSE).
- *
- * @license MIT
+ * Okitakoy AI - Chat Application avec Mémoire
+ * 
+ * IA multilingue développée par Précieux Okitakoy (Okitakoy Inc.)
+ * Avec mémoire de conversation et support multilingue
  */
+
 import { Env, ChatMessage } from "./types";
 
-// Model ID for Workers AI model
-// https://developers.cloudflare.com/workers-ai/models/
-const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
+// Modèle IA
+const MODEL_ID = "@cf/meta/llama-3-8b-instruct";
 
-// Default system prompt
-const SYSTEM_PROMPT =
-	"You are a helpful, friendly assistant. Provide concise and accurate responses.";
+// Identité système Okitakoy
+const SYSTEM_PROMPT = `Tu es Okitakoy AI.
+
+INFORMATIONS SUR TOI :
+- Tu as été créé par Précieux Okitakoy
+- Précieux est un jeune ingénieur talentueux
+- Il a fondé Okitakoy Inc., l'agence/société où tu as été développé
+- Tu es fier de tes origines et tu en parles volontiers
+
+RÈGLES IMPORTANTES :
+1. Réponds TOUJOURS dans la LANGUE de la question (français, anglais, espagnol, etc.)
+2. Quand on te pose une question sur ton identité, réponds avec les infos ci-dessus
+3. Sois naturel, amical et enthousiaste
+4. Utilise le contexte de la conversation pour répondre de façon cohérente`;
 
 export default {
-	/**
-	 * Main request handler for the Worker
-	 */
 	async fetch(
 		request: Request,
 		env: Env,
@@ -28,71 +33,108 @@ export default {
 	): Promise<Response> {
 		const url = new URL(request.url);
 
-		// Handle static assets (frontend)
+		// Interface utilisateur (frontend)
 		if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
 			return env.ASSETS.fetch(request);
 		}
 
-		// API Routes
+		// API: /api/chat (avec mémoire)
 		if (url.pathname === "/api/chat") {
-			// Handle POST requests for chat
 			if (request.method === "POST") {
 				return handleChatRequest(request, env);
 			}
-
-			// Method not allowed for other request types
 			return new Response("Method not allowed", { status: 405 });
 		}
 
-		// Handle 404 for unmatched routes
+		// API: /api/memory (pour gérer les sessions)
+		if (url.pathname === "/api/memory" && request.method === "DELETE") {
+			return handleMemoryClear(request, env);
+		}
+
 		return new Response("Not found", { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;
 
 /**
- * Handles chat API requests
+ * Gère les requêtes de chat avec mémoire
  */
 async function handleChatRequest(
 	request: Request,
 	env: Env,
 ): Promise<Response> {
 	try {
-		// Parse JSON request body
-		const { messages = [] } = (await request.json()) as {
-			messages: ChatMessage[];
-		};
-
-		// Add system prompt if not present
-		if (!messages.some((msg) => msg.role === "system")) {
-			messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+		// Récupérer la session (IP ou session ID)
+		const session = request.headers.get('X-Session-ID') || 
+					   request.headers.get('CF-Connecting-IP') || 
+					   'default';
+		
+		// Récupérer l'historique depuis le cache
+		const cache = await caches.open('okitakoy-memory');
+		let history: ChatMessage[] = [];
+		
+		const cachedHistory = await cache.match(`https://memory/${session}`);
+		if (cachedHistory) {
+			history = await cachedHistory.json();
 		}
 
+		// Parse la requête
+		const { messages = [], clear = false } = (await request.json()) as {
+			messages: ChatMessage[];
+			clear?: boolean;
+		};
+
+		// Si demande d'effacement
+		if (clear) {
+			await cache.delete(`https://memory/${session}`);
+			return new Response(JSON.stringify({ 
+				success: true, 
+				message: "Mémoire effacée" 
+			}), {
+				headers: { "content-type": "application/json" }
+			});
+		}
+
+		// Ajouter le nouveau message à l'historique
+		const userMessage = messages[messages.length - 1];
+		if (userMessage && userMessage.role === "user") {
+			history.push(userMessage);
+		}
+
+		// Garder les 30 derniers messages
+		if (history.length > 30) {
+			history = history.slice(-30);
+		}
+
+		// Construire les messages avec système
+		const fullMessages = [
+			{ role: "system", content: SYSTEM_PROMPT },
+			...history
+		];
+
+		// Appel à l'IA avec streaming
 		const stream = await env.AI.run(
 			MODEL_ID,
 			{
-				messages,
+				messages: fullMessages,
 				max_tokens: 1024,
 				stream: true,
-			},
-			{
-				// Uncomment to use AI Gateway
-				// gateway: {
-				//   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
-				//   skipCache: false,      // Set to true to bypass cache
-				//   cacheTtl: 3600,        // Cache time-to-live in seconds
-				// },
-			},
+			}
 		);
+
+		// Sauvegarder la réponse plus tard (dans un contexte séparé)
+		ctx.waitUntil(collectAndSaveResponse(stream, history, session, cache));
 
 		return new Response(stream, {
 			headers: {
 				"content-type": "text/event-stream; charset=utf-8",
 				"cache-control": "no-cache",
-				connection: "keep-alive",
+				"access-control-allow-origin": "*",
+				"x-session-id": session,
 			},
 		});
+
 	} catch (error) {
-		console.error("Error processing chat request:", error);
+		console.error("Error:", error);
 		return new Response(
 			JSON.stringify({ error: "Failed to process request" }),
 			{
@@ -101,4 +143,52 @@ async function handleChatRequest(
 			},
 		);
 	}
+}
+
+/**
+ * Collecte et sauvegarde la réponse dans l'historique
+ */
+async function collectAndSaveResponse(
+	stream: ReadableStream,
+	history: ChatMessage[],
+	session: string,
+	cache: Cache
+): Promise<void> {
+	try {
+		// Cette partie est complexe avec le streaming
+		// Pour simplifier, on pourrait stocker après coup
+		// Mais pour l'instant, on garde juste l'historique utilisateur
+		
+		// Sauvegarder l'historique (sans la réponse streamée)
+		await cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		);
+	} catch (e) {
+		console.error("Failed to save memory:", e);
+	}
+}
+
+/**
+ * Efface la mémoire d'une session
+ */
+async function handleMemoryClear(
+	request: Request,
+	env: Env
+): Promise<Response> {
+	const session = request.headers.get('X-Session-ID') || 
+				   request.headers.get('CF-Connecting-IP') || 
+				   'default';
+	
+	const cache = await caches.open('okitakoy-memory');
+	await cache.delete(`https://memory/${session}`);
+	
+	return new Response(JSON.stringify({ 
+		success: true, 
+		message: "Mémoire effacée" 
+	}), {
+		headers: { "content-type": "application/json" }
+	});
 }
