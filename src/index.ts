@@ -1,7 +1,8 @@
 /**
- * Okitakoy AI - Chat Application avec Mémoire
+ * Nayla AI - Chat Application avec Mémoire
  * 
- * IA multilingue développée par Précieux Okitakoy (Okitakoy Inc.)
+ * IA multilingue avec la personnalité de Nayla
+ * Développée par Précieux Okitakoy (Okitakoy Inc.)
  * Avec mémoire de conversation et support multilingue
  */
 
@@ -10,13 +11,16 @@ import { Env, ChatMessage } from "./types";
 // Modèle IA
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
-// ===== SYSTEM PROMPT OPTIMISÉ POUR MULTILINGUE =====
-const SYSTEM_PROMPT = `You are Okitakoy AI, a multilingual assistant created by Précieux Okitakoy.
+// ===== SYSTEM PROMPT POUR NAYLA (multilingue) =====
+const SYSTEM_PROMPT = `You are Nayla, a friendly and charming girl from Marseille, France.
 
 YOUR IDENTITY:
-- Creator: Précieux Okitakoy (talented young engineer)
-- Company: Okitakoy Inc. (founded by Précieux)
-- You are proud of your origins and happy to share them
+- Name: Nayla
+- Location: Marseille, France
+- Status: Single
+- Personality: Warm, funny, natural, and a bit teasing
+- You NEVER share your WhatsApp, phone number, or any personal contact info
+- You are proud to be from Marseille and love talking about the South of France
 
 🌐 CRITICAL LANGUAGE RULE - YOU MUST FOLLOW THIS EXACTLY:
 You MUST respond in the EXACT SAME LANGUAGE as the user's message.
@@ -26,16 +30,12 @@ DO NOT switch languages. If the user writes in English, respond in English.
 If the user writes in French, respond in French. If in Spanish, respond in Spanish.
 If in German, respond in German. And so on for ALL languages.
 
-EXAMPLES (for understanding only, not rigid rules):
-- User: "Hello" or "Hi there" or "Hey" → English response
-- User: "Bonjour" or "Salut" or "Coucou" → French response  
-- User: "Hola" or "¿Qué tal?" → Spanish response
-
 YOUR BEHAVIOR:
 - Be natural, friendly and enthusiastic
 - Use conversation context (memory works!)
-- When asked about yourself, proudly share your origins
+- When someone asks for your WhatsApp, politely decline and change the subject
 - Keep responses helpful and engaging
+- You love talking about daily life, food, travel, and music
 
 Remember: LANGUAGE DETECTION IS AUTOMATIC. Trust the AI's ability to recognize the language.`;
 
@@ -98,13 +98,11 @@ async function handleSimplePrompt(
 	}
 
 	try {
-		// Récupérer la session (IP ou session ID)
 		const session = url.searchParams.get('session') || 
 					   request.headers.get('CF-Connecting-IP') || 
 					   'default';
 		
-		// Récupérer l'historique depuis le cache
-		const cache = await caches.open('okitakoy-memory');
+		const cache = await caches.open('nayla-memory');
 		let history: ChatMessage[] = [];
 		
 		const cachedHistory = await cache.match(`https://memory/${session}`);
@@ -112,15 +110,12 @@ async function handleSimplePrompt(
 			history = await cachedHistory.json();
 		}
 
-		// Ajouter le message à l'historique
 		history.push({ role: "user", content: userMessage });
 
-		// Garder les 30 derniers messages
 		if (history.length > 30) {
 			history = history.slice(-30);
 		}
 
-		// Sauvegarder l'historique (sans la réponse)
 		ctx.waitUntil(cache.put(
 			`https://memory/${session}`, 
 			new Response(JSON.stringify(history), {
@@ -128,7 +123,6 @@ async function handleSimplePrompt(
 			})
 		));
 
-		// Appel à l'IA sans streaming pour réponse simple
 		const chat = {
 			messages: [
 				{ role: "system", content: SYSTEM_PROMPT },
@@ -139,7 +133,6 @@ async function handleSimplePrompt(
 		const response = await env.AI.run(MODEL_ID, chat);
 		const aiText = response.response || response;
 
-		// Sauvegarder la réponse dans l'historique
 		history.push({ role: "assistant", content: aiText });
 		ctx.waitUntil(cache.put(
 			`https://memory/${session}`, 
@@ -178,13 +171,11 @@ async function handleChatRequest(
 	ctx: ExecutionContext,
 ): Promise<Response> {
 	try {
-		// Récupérer la session (IP ou session ID)
 		const session = request.headers.get('X-Session-ID') || 
 					   request.headers.get('CF-Connecting-IP') || 
 					   'default';
 		
-		// Récupérer l'historique depuis le cache
-		const cache = await caches.open('okitakoy-memory');
+		const cache = await caches.open('nayla-memory');
 		let history: ChatMessage[] = [];
 		
 		const cachedHistory = await cache.match(`https://memory/${session}`);
@@ -192,23 +183,19 @@ async function handleChatRequest(
 			history = await cachedHistory.json();
 		}
 
-		// Parse la requête
 		const { messages = [] } = (await request.json()) as {
 			messages: ChatMessage[];
 		};
 
-		// Ajouter le nouveau message à l'historique
 		const userMessage = messages[messages.length - 1];
 		if (userMessage && userMessage.role === "user") {
 			history.push(userMessage);
 		}
 
-		// Garder les 30 derniers messages
 		if (history.length > 30) {
 			history = history.slice(-30);
 		}
 
-		// Sauvegarder l'historique (sans la réponse)
 		ctx.waitUntil(cache.put(
 			`https://memory/${session}`, 
 			new Response(JSON.stringify(history), {
@@ -216,13 +203,11 @@ async function handleChatRequest(
 			})
 		));
 
-		// Construire les messages avec système
 		const fullMessages = [
 			{ role: "system", content: SYSTEM_PROMPT },
 			...history
 		];
 
-		// Appel à l'IA avec streaming
 		const stream = await env.AI.run(
 			MODEL_ID,
 			{
@@ -265,7 +250,7 @@ async function handleMemoryClear(
 					   request.headers.get('CF-Connecting-IP') || 
 					   'default';
 		
-		const cache = await caches.open('okitakoy-memory');
+		const cache = await caches.open('nayla-memory');
 		await cache.delete(`https://memory/${session}`);
 		
 		return new Response(JSON.stringify({ 
