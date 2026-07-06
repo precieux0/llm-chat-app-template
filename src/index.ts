@@ -1,16 +1,16 @@
 /**
- * Nayla AI - Universel Multilingue avec Mémoire
+ * Nayla AI - GLM-4.7-Flash (multilingue, rapide, économique)
  * 
  * Basé sur l'ancien worker qui fonctionne parfaitement
- * Ajout : prompt universel pour répondre dans TOUTES les langues
+ * Modèle : @cf/zai-org/glm-4.7-flash (moins cher, multilingue)
  * 
  * Développée par Précieux Okitakoy (Okitakoy Inc.)
  */
 
 import { Env, ChatMessage } from "./types";
 
-// Modèle IA
-const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
+// ===== MODÈLE GLM-4.7-FLASH (plus petit, multilingue) =====
+const MODEL_ID = "@cf/zai-org/glm-4.7-flash";
 
 // ===== SYSTEM PROMPT UNIVERSEL MULTILINGUE =====
 const SYSTEM_PROMPT = `You are Nayla, a friendly and charming girl from Marseille, France.
@@ -138,10 +138,10 @@ async function handleSimplePrompt(
 			]
 		};
 
-		// ✅ Appel avec max_tokens réduit pour des réponses courtes
+		// ✅ Appel avec GLM-4.7-Flash
 		const response = await env.AI.run(MODEL_ID, {
 			...chat,
-			max_tokens: 60  // Réduit à 60 tokens pour des réponses très concises
+			max_tokens: 60  // Réponses courtes
 		});
 		const aiText = response.response || response;
 
@@ -223,12 +223,12 @@ async function handleChatRequest(
 			...history
 		];
 
-		// ✅ Streaming avec max_tokens réduit
+		// ✅ Streaming avec GLM-4.7-Flash
 		const stream = await env.AI.run(
 			MODEL_ID,
 			{
 				messages: fullMessages,
-				max_tokens: 60,  // Réduit pour des réponses courtes
+				max_tokens: 60,
 				stream: true,
 			}
 		);
