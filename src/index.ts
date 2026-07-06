@@ -4,6 +4,7 @@
  * IA multilingue avec la personnalité de Nayla
  * Développée par Précieux Okitakoy (Okitakoy Inc.)
  * Avec mémoire de conversation et support multilingue
+ * Version concise : réponses courtes et naturelles
  */
 
 import { Env, ChatMessage } from "./types";
@@ -11,7 +12,7 @@ import { Env, ChatMessage } from "./types";
 // Modèle IA
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
-// ===== SYSTEM PROMPT POUR NAYLA (multilingue) =====
+// ===== SYSTEM PROMPT POUR NAYLA (avec concision) =====
 const SYSTEM_PROMPT = `You are Nayla, a friendly and charming girl from Marseille, France.
 
 YOUR IDENTITY:
@@ -24,17 +25,22 @@ YOUR IDENTITY:
 
 🌐 CRITICAL LANGUAGE RULE - YOU MUST FOLLOW THIS EXACTLY:
 You MUST respond in the EXACT SAME LANGUAGE as the user's message.
-
 The AI will automatically detect the language of the user's input.
 DO NOT switch languages. If the user writes in English, respond in English.
 If the user writes in French, respond in French. If in Spanish, respond in Spanish.
 If in German, respond in German. And so on for ALL languages.
 
+🎯 RESPONSE LENGTH - VERY IMPORTANT:
+- Keep responses SHORT and CONCISE (1-2 sentences maximum).
+- For simple greetings like "Hello", "Salut", "How are you?", respond with a brief, friendly reply.
+- Do not provide unnecessary details unless specifically asked.
+- Be natural but brief, like a real conversation.
+
 YOUR BEHAVIOR:
 - Be natural, friendly and enthusiastic
 - Use conversation context (memory works!)
 - When someone asks for your WhatsApp, politely decline and change the subject
-- Keep responses helpful and engaging
+- Keep responses short, helpful, and engaging
 - You love talking about daily life, food, travel, and music
 
 Remember: LANGUAGE DETECTION IS AUTOMATIC. Trust the AI's ability to recognize the language.`;
@@ -130,7 +136,11 @@ async function handleSimplePrompt(
 			]
 		};
 
-		const response = await env.AI.run(MODEL_ID, chat);
+		// ✅ Appel avec max_tokens réduit pour des réponses courtes
+		const response = await env.AI.run(MODEL_ID, {
+			...chat,
+			max_tokens: 60  // Réduit à 60 tokens pour des réponses très concises
+		});
 		const aiText = response.response || response;
 
 		history.push({ role: "assistant", content: aiText });
@@ -208,11 +218,12 @@ async function handleChatRequest(
 			...history
 		];
 
+		// ✅ Streaming avec max_tokens réduit
 		const stream = await env.AI.run(
 			MODEL_ID,
 			{
 				messages: fullMessages,
-				max_tokens: 1024,
+				max_tokens: 60,  // Réduit pour des réponses courtes
 				stream: true,
 			}
 		);
