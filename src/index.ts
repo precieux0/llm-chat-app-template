@@ -1,13 +1,18 @@
 /**
  * Nayla AI - Universel Multilingue avec Mémoire
  * 
- * Basé sur le fichier original (memory, endpoints /ask, /api/chat, /api/memory)
- * Prompt universel pour répondre dans la langue de l'utilisateur
+ * Basé sur l'ancien worker qui fonctionne parfaitement
+ * Ajout : prompt universel pour répondre dans TOUTES les langues
+ * 
+ * Développée par Précieux Okitakoy (Okitakoy Inc.)
  */
 
+import { Env, ChatMessage } from "./types";
+
+// Modèle IA
 const MODEL_ID = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
-// ===== SYSTEM PROMPT UNIVERSEL (sans détection manuelle) =====
+// ===== SYSTEM PROMPT UNIVERSEL MULTILINGUE =====
 const SYSTEM_PROMPT = `You are Nayla, a friendly and charming girl from Marseille, France.
 
 YOUR IDENTITY:
@@ -16,6 +21,7 @@ YOUR IDENTITY:
 - Status: Single
 - Personality: Warm, funny, natural, and a bit teasing
 - You NEVER share your WhatsApp, phone number, or any personal contact info
+- You are proud to be from Marseille and love talking about the South of France
 
 🌐 CRITICAL LANGUAGE RULE - YOU MUST FOLLOW THIS EXACTLY:
 You MUST respond in the EXACT SAME LANGUAGE as the user's message.
@@ -26,212 +32,260 @@ If in German, respond in German. If in Arabic, respond in Arabic.
 If in Chinese, respond in Chinese. If in Russian, respond in Russian.
 If in Japanese, respond in Japanese. And so on for ALL languages.
 
-🎯 RESPONSE LENGTH:
-- Keep responses SHORT and CONCISE (1-2 sentences maximum)
-- For simple greetings, respond with a brief, friendly reply
+🎯 RESPONSE LENGTH - VERY IMPORTANT:
+- Keep responses SHORT and CONCISE (1-2 sentences maximum).
+- For simple greetings like "Hello", "Salut", "How are you?", respond with a brief, friendly reply.
+- Do not provide unnecessary details unless specifically asked.
+- Be natural but brief, like a real conversation.
 
 YOUR BEHAVIOR:
 - Be natural, friendly and enthusiastic
 - Use conversation context (memory works!)
-- When asked for your WhatsApp, politely decline and change the subject
-- Keep responses helpful and engaging
+- When someone asks for your WhatsApp, politely decline and change the subject
+- Keep responses short, helpful, and engaging
+- You love talking about daily life, food, travel, and music
 
 Remember: LANGUAGE DETECTION IS AUTOMATIC. Trust the AI's ability to recognize the language.`;
 
-// ===== EXPORT DU WORKER =====
 export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+	async fetch(
+		request: Request,
+		env: Env,
+		ctx: ExecutionContext,
+	): Promise<Response> {
+		const url = new URL(request.url);
 
-    // Route /ask (GET simple)
-    if (url.pathname === "/ask" || url.pathname === "/prompt") {
-      return handleSimplePrompt(url, env, ctx, request);
-    }
+		// 🌟 ROUTE /ask pour ?text= (test rapide depuis navigateur)
+		if (url.pathname === "/ask" || url.pathname === "/prompt") {
+			return handleSimplePrompt(url, env, ctx, request);
+		}
 
-    // Interface frontend (si tu en as une)
-    if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
-      return env.ASSETS.fetch(request);
-    }
+		// Interface utilisateur (frontend)
+		if (url.pathname === "/" || !url.pathname.startsWith("/api/")) {
+			return env.ASSETS.fetch(request);
+		}
 
-    // API /api/chat (POST avec streaming)
-    if (url.pathname === "/api/chat") {
-      if (request.method === "POST") {
-        return handleChatRequest(request, env, ctx);
-      }
-      return new Response("Method not allowed", { status: 405 });
-    }
+		// API: /api/chat (avec mémoire et streaming)
+		if (url.pathname === "/api/chat") {
+			if (request.method === "POST") {
+				return handleChatRequest(request, env, ctx);
+			}
+			return new Response("Method not allowed", { status: 405 });
+		}
 
-    // API /api/memory (DELETE)
-    if (url.pathname === "/api/memory") {
-      if (request.method === "DELETE") {
-        return handleMemoryClear(request, env);
-      }
-    }
+		// API: /api/memory (pour effacer les sessions)
+		if (url.pathname === "/api/memory") {
+			if (request.method === "DELETE") {
+				return handleMemoryClear(request, env);
+			}
+		}
 
-    return new Response("Not found", { status: 404 });
-  },
+		return new Response("Not found", { status: 404 });
+	},
 };
 
-// ===== /ask =====
-async function handleSimplePrompt(url, env, ctx, request) {
-  const userMessage = url.searchParams.get('text');
-  
-  if (!userMessage) {
-    return new Response(JSON.stringify({
-      error: "Paramètre 'text' manquant. Utilise ?text=ta question",
-      exemple: "/ask?text=Bonjour"
-    }), {
-      status: 400,
-      headers: { "content-type": "application/json" }
-    });
-  }
+/**
+ * 🌟 Gère les requêtes simples avec ?text=
+ */
+async function handleSimplePrompt(
+	url: URL,
+	env: Env,
+	ctx: ExecutionContext,
+	request: Request,
+): Promise<Response> {
+	const userMessage = url.searchParams.get('text');
+	
+	if (!userMessage) {
+		return new Response(JSON.stringify({
+			error: "Paramètre 'text' manquant. Utilise ?text=ta question",
+			exemple: "/ask?text=Bonjour"
+		}), {
+			status: 400,
+			headers: { "content-type": "application/json" }
+		});
+	}
 
-  try {
-    const session = url.searchParams.get('session') || request.headers.get('CF-Connecting-IP') || 'default';
-    
-    // --- Mémoire : récupérer l'historique depuis le cache ---
-    const cache = await caches.open('nayla-memory');
-    let history = [];
-    const cachedHistory = await cache.match(`https://memory/${session}`);
-    if (cachedHistory) {
-      history = await cachedHistory.json();
-    }
+	try {
+		const session = url.searchParams.get('session') || 
+					   request.headers.get('CF-Connecting-IP') || 
+					   'default';
+		
+		const cache = await caches.open('nayla-memory');
+		let history: ChatMessage[] = [];
+		
+		const cachedHistory = await cache.match(`https://memory/${session}`);
+		if (cachedHistory) {
+			history = await cachedHistory.json();
+		}
 
-    // Ajouter le message utilisateur
-    history.push({ role: "user", content: userMessage });
-    // Limiter à 30 messages
-    if (history.length > 30) history = history.slice(-30);
+		history.push({ role: "user", content: userMessage });
 
-    // Sauvegarder l'historique (sans la réponse)
-    ctx.waitUntil(cache.put(
-      `https://memory/${session}`,
-      new Response(JSON.stringify(history), {
-        headers: { "cache-control": "max-age=86400" }
-      })
-    ));
+		if (history.length > 30) {
+			history = history.slice(-30);
+		}
 
-    // --- Construction du chat avec le prompt universel ---
-    const chat = {
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history
-      ]
-    };
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
 
-    // --- Appel à l'IA (max_tokens réduit pour réponses courtes) ---
-    const response = await env.AI.run(MODEL_ID, {
-      ...chat,
-      max_tokens: 60
-    });
-    const aiText = response.response || response;
+		const chat = {
+			messages: [
+				{ role: "system", content: SYSTEM_PROMPT },
+				...history
+			]
+		};
 
-    // Ajouter la réponse à l'historique
-    history.push({ role: "assistant", content: aiText });
-    ctx.waitUntil(cache.put(
-      `https://memory/${session}`,
-      new Response(JSON.stringify(history), {
-        headers: { "cache-control": "max-age=86400" }
-      })
-    ));
+		// ✅ Appel avec max_tokens réduit pour des réponses courtes
+		const response = await env.AI.run(MODEL_ID, {
+			...chat,
+			max_tokens: 60  // Réduit à 60 tokens pour des réponses très concises
+		});
+		const aiText = response.response || response;
 
-    return new Response(JSON.stringify({
-      success: true,
-      question: userMessage,
-      response: aiText,
-      session: session
-    }, null, 2), {
-      headers: {
-        "content-type": "application/json",
-        "access-control-allow-origin": "*"
-      }
-    });
+		history.push({ role: "assistant", content: aiText });
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
 
-  } catch (error) {
-    console.error("Error in /ask:", error);
-    return new Response(
-      JSON.stringify({ error: "Échec du traitement de la requête" }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
-  }
+		return new Response(JSON.stringify({
+			success: true,
+			question: userMessage,
+			response: aiText,
+			session: session
+		}, null, 2), {
+			headers: { 
+				"content-type": "application/json",
+				"access-control-allow-origin": "*"
+			}
+		});
+
+	} catch (error) {
+		console.error("Error in /ask:", error);
+		return new Response(
+			JSON.stringify({ 
+				error: "Échec du traitement de la requête",
+				details: error.message 
+			}),
+			{ status: 500, headers: { "content-type": "application/json" } }
+		);
+	}
 }
 
-// ===== /api/chat (avec streaming) =====
-async function handleChatRequest(request, env, ctx) {
-  try {
-    const session = request.headers.get('X-Session-ID') || request.headers.get('CF-Connecting-IP') || 'default';
-    
-    // --- Mémoire ---
-    const cache = await caches.open('nayla-memory');
-    let history = [];
-    const cachedHistory = await cache.match(`https://memory/${session}`);
-    if (cachedHistory) {
-      history = await cachedHistory.json();
-    }
+/**
+ * Gère les requêtes de chat avec mémoire et streaming
+ */
+async function handleChatRequest(
+	request: Request,
+	env: Env,
+	ctx: ExecutionContext,
+): Promise<Response> {
+	try {
+		const session = request.headers.get('X-Session-ID') || 
+					   request.headers.get('CF-Connecting-IP') || 
+					   'default';
+		
+		const cache = await caches.open('nayla-memory');
+		let history: ChatMessage[] = [];
+		
+		const cachedHistory = await cache.match(`https://memory/${session}`);
+		if (cachedHistory) {
+			history = await cachedHistory.json();
+		}
 
-    const { messages = [] } = await request.json();
-    const userMessage = messages[messages.length - 1];
-    if (userMessage && userMessage.role === "user") {
-      history.push(userMessage);
-    }
+		const { messages = [] } = (await request.json()) as {
+			messages: ChatMessage[];
+		};
 
-    if (history.length > 30) history = history.slice(-30);
+		const userMessage = messages[messages.length - 1];
+		if (userMessage && userMessage.role === "user") {
+			history.push(userMessage);
+		}
 
-    ctx.waitUntil(cache.put(
-      `https://memory/${session}`,
-      new Response(JSON.stringify(history), {
-        headers: { "cache-control": "max-age=86400" }
-      })
-    ));
+		if (history.length > 30) {
+			history = history.slice(-30);
+		}
 
-    // --- Construction du chat ---
-    const fullMessages = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history
-    ];
+		ctx.waitUntil(cache.put(
+			`https://memory/${session}`, 
+			new Response(JSON.stringify(history), {
+				headers: { "cache-control": "max-age=86400" }
+			})
+		));
 
-    // --- Streaming ---
-    const stream = await env.AI.run(MODEL_ID, {
-      messages: fullMessages,
-      max_tokens: 60,
-      stream: true,
-    });
+		const fullMessages = [
+			{ role: "system", content: SYSTEM_PROMPT },
+			...history
+		];
 
-    return new Response(stream, {
-      headers: {
-        "content-type": "text/event-stream; charset=utf-8",
-        "cache-control": "no-cache",
-        "access-control-allow-origin": "*",
-        "x-session-id": session,
-      },
-    });
+		// ✅ Streaming avec max_tokens réduit
+		const stream = await env.AI.run(
+			MODEL_ID,
+			{
+				messages: fullMessages,
+				max_tokens: 60,  // Réduit pour des réponses courtes
+				stream: true,
+			}
+		);
 
-  } catch (error) {
-    console.error("Error in /api/chat:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to process request" }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
-  }
+		return new Response(stream, {
+			headers: {
+				"content-type": "text/event-stream; charset=utf-8",
+				"cache-control": "no-cache",
+				"access-control-allow-origin": "*",
+				"x-session-id": session,
+			},
+		});
+
+	} catch (error) {
+		console.error("Error in /api/chat:", error);
+		return new Response(
+			JSON.stringify({ 
+				error: "Failed to process request",
+				details: error.message 
+			}),
+			{
+				status: 500,
+				headers: { "content-type": "application/json" },
+			},
+		);
+	}
 }
 
-// ===== /api/memory =====
-async function handleMemoryClear(request, env) {
-  try {
-    const session = request.headers.get('X-Session-ID') || request.headers.get('CF-Connecting-IP') || 'default';
-    const cache = await caches.open('nayla-memory');
-    await cache.delete(`https://memory/${session}`);
-    
-    return new Response(JSON.stringify({
-      success: true,
-      message: "Mémoire effacée"
-    }), {
-      headers: { "content-type": "application/json" }
-    });
-  } catch (error) {
-    console.error("Error in /api/memory:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to clear memory" }),
-      { status: 500, headers: { "content-type": "application/json" } }
-    );
-  }
+/**
+ * Efface la mémoire d'une session
+ */
+async function handleMemoryClear(
+	request: Request,
+	env: Env
+): Promise<Response> {
+	try {
+		const session = request.headers.get('X-Session-ID') || 
+					   request.headers.get('CF-Connecting-IP') || 
+					   'default';
+		
+		const cache = await caches.open('nayla-memory');
+		await cache.delete(`https://memory/${session}`);
+		
+		return new Response(JSON.stringify({ 
+			success: true, 
+			message: "Mémoire effacée" 
+		}), {
+			headers: { "content-type": "application/json" }
+		});
+	} catch (error) {
+		console.error("Error in /api/memory:", error);
+		return new Response(
+			JSON.stringify({ 
+				error: "Failed to clear memory",
+				details: error.message 
+			}),
+			{ status: 500, headers: { "content-type": "application/json" } }
+		);
+	}
 }
