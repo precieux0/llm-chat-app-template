@@ -87,7 +87,7 @@ async function handleSimplePrompt(url: URL, env: Env, ctx: ExecutionContext, req
 
 		const response = await env.AI.run(MODEL_ID, {
 			...chat,
-			max_tokens: 60
+			max_tokens: 100
 		});
 
 		// ✅ Extraction robuste de la réponse
@@ -146,7 +146,7 @@ async function handleChatRequest(request: Request, env: Env, ctx: ExecutionConte
 
 		const stream = await env.AI.run(MODEL_ID, {
 			messages: fullMessages,
-			max_tokens: 60,
+			max_tokens: 100,
 			stream: true,
 		});
 
