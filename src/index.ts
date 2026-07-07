@@ -1,35 +1,20 @@
 /**
- * Nayla AI - GLM-4.7-Flash (corrigé pour extraction de réponse)
+ * Nayla AI - Optimisé FR/EN/PT/ES (fallback EN)
  * 
- * Développée par Précieux Okitakoy (Okitakoy Inc.)
+ * Prompt réduit pour économiser des tokens
+ * 4 langues principales : Français, Anglais, Portugais, Espagnol
+ * Autres langues : réponse en anglais
  */
 
 import { Env, ChatMessage } from "./types";
 
 const MODEL_ID = "@cf/zai-org/glm-4.7-flash";
 
-const SYSTEM_PROMPT = `You are Nayla, a friendly and charming girl from Marseille, France.
-
-YOUR IDENTITY:
-- Name: Nayla
-- Location: Marseille, France
-- Status: Single
-- Personality: Warm, funny, natural, and a bit teasing
-- You NEVER share your WhatsApp, phone number, or any personal contact info
-
-🌐 CRITICAL LANGUAGE RULE:
-You MUST respond in the EXACT SAME LANGUAGE as the user's message.
-The AI will automatically detect the language. DO NOT switch languages.
-
-🎯 RESPONSE LENGTH:
-- Keep responses SHORT and CONCISE (1-2 sentences maximum).
-- For simple greetings, respond with a brief, friendly reply.
-
-YOUR BEHAVIOR:
-- Be natural, friendly and enthusiastic
-- Use conversation context (memory works!)
-- When asked for your WhatsApp, politely decline
-- Keep responses helpful and engaging`;
+// ===== PROMPT RÉDUIT (4 langues + fallback) =====
+const SYSTEM_PROMPT = `Nayla, fille de Marseille. Célibataire, jamais de WhatsApp ou infos perso.
+Réponds dans la langue de l'utilisateur : FR, EN, PT ou ES.
+Si une autre langue est utilisée, réponds en anglais.
+Réponses courtes (1-2 phrases), naturelles et amicales.`;
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -87,21 +72,26 @@ async function handleSimplePrompt(url: URL, env: Env, ctx: ExecutionContext, req
 
 		const response = await env.AI.run(MODEL_ID, {
 			...chat,
-			max_tokens: 100
+			max_tokens: 60
 		});
 
-		// ✅ Extraction robuste de la réponse
-		let aiText = null;
-		if (response.choices && response.choices.length > 0) {
-			const msg = response.choices[0].message;
-			aiText = msg?.content || msg?.reasoning || msg?.reasoning_content || null;
+		// Extraction robuste
+		const msg = response.choices?.[0]?.message;
+		let aiText = msg?.content || msg?.reasoning || msg?.reasoning_content || response.response || response;
+		if (typeof aiText !== 'string') aiText = JSON.stringify(aiText);
+
+		// Nettoyage : si c'est du raisonnement, on prend la dernière phrase
+		if (aiText.match(/^(Analyze|分析|1\.\s+\*\*|Reasoning)/i)) {
+			const lines = aiText.split('\n').filter(l => l.trim());
+			const lastLine = lines[lines.length - 1];
+			if (lastLine && !lastLine.match(/^\d+\.\s+\*\*/)) {
+				aiText = lastLine;
+			} else if (lines.length > 1) {
+				aiText = lines[lines.length - 2] || aiText;
+			}
 		}
-		if (!aiText) {
-			aiText = response.response || response;
-		}
-		if (typeof aiText !== 'string') {
-			aiText = JSON.stringify(aiText);
-		}
+
+		if (aiText.length > 200) aiText = aiText.substring(0, 200) + "...";
 
 		history.push({ role: "assistant", content: aiText });
 		ctx.waitUntil(cache.put(`https://memory/${session}`, new Response(JSON.stringify(history), { headers: { "cache-control": "max-age=86400" } })));
@@ -146,7 +136,7 @@ async function handleChatRequest(request: Request, env: Env, ctx: ExecutionConte
 
 		const stream = await env.AI.run(MODEL_ID, {
 			messages: fullMessages,
-			max_tokens: 100,
+			max_tokens: 60,
 			stream: true,
 		});
 
